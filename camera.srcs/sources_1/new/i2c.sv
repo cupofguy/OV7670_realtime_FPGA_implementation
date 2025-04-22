@@ -57,7 +57,6 @@ enum logic [3:0] {
     SEND_REG_ADDR,
     SEND_DATA,
     STOP,
-    WAIT_,
     DONE
 } state;
     
@@ -65,7 +64,7 @@ enum logic [3:0] {
  // Register list (example: small config array)
 //logic [7:0] config_array [0:N-1][1:0];  // [register][0=addr,1=data]
 // Clock dividers for scl (e.g. 100kHz from 100MHz clk)
-logic scl_tick;
+
 
 // I2C bit-level control
 logic [7:0] byte_to_send;
@@ -77,6 +76,7 @@ logic sda_drive_en;
 assign sda = sda_drive_en ? sda_out : 1'bz;
 logic sda_in = sda;
 logic [1:0] s_count;      //counter for start sequence 
+logic [1:0] s_count1;
 logic [2:0] reg_s_count;    //counter for sending reg address
 
 
@@ -106,17 +106,29 @@ always_ff @(posedge clk or negedge rst_n) begin
         state <= IDLE;
         done <= 0;
         busy <= 0;
+        sda_drive_en <= 1;
+        sda_out <= 1;
+        scl <= 1;
+        ROM_index <= 0;
+        bit_index <= 0;
+        s_count <= 0;
+        s_count1 <= 0;
     end else begin
         case (state)
             IDLE: begin
-                if (start) begin            //if button to start process pressed, start process
+                done <= 0;
+                busy <= 0;
+                sda_out <= 1;
+                scl <= 1;
+            
+                  if (start) begin            //if button to start process pressed, start process
                     state <= LOAD_NEXT;
                     busy <= 1;
-                end
+                  end
             end
 
             LOAD_NEXT: begin
-                if (ROM_index == 75) begin        //once done going through all write data, end
+                if (ROM_index >= 75) begin        //once done going through all write data, end
                     state <= DONE;              
                 end else begin
                     byte_to_send <= 8'h42; // Device address (write)
@@ -129,7 +141,7 @@ always_ff @(posedge clk or negedge rst_n) begin
             START: begin
                 // Pull SDA low while SCL is high
                 //do_start_condition()
-               
+               if(scl_tick) begin
                 if(s_count == 0)                //buffer state for stability, makes sure line is actually idle
                     begin
                         sda_drive_en <= 1;
@@ -139,8 +151,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                     end
                 else if(s_count == 1)           //begin start process, set sda low first
                     begin
-                        sda_drive_en <= 1'b0;
-                        sda_in <= 1'b0;
+                        sda_out <= 1'b0;
                         s_count <= 2'b10;
                     end
                 else if(s_count == 2)       //continue start process by setting scl low as well, atp can go to next state
@@ -151,7 +162,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                     end
                 
                 
-                
+                end
             end
 
             SEND_DEVICE_ADDR: begin
@@ -166,6 +177,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                         sda_out <= byte_to_send[7 - bit_index];       //send msb of data on sda bus
                         sda_drive_en <= 1'b1;             //drive line
                         bit_index <= bit_index + 1;     //increment counter
+                        scl <= 0;
                         end
                         
                    
@@ -192,6 +204,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                         sda_out <= byte_to_send[7 - bit_index];       //send msb of data on sda bus
                         sda_drive_en <= 1'b1;             //drive line
                         bit_index <= bit_index + 1;     //increment counter
+                        scl <= 0;
                         end
                         
                     else begin
@@ -212,6 +225,7 @@ always_ff @(posedge clk or negedge rst_n) begin
                         sda_out <= byte_to_send[7 - bit_index];       //send msb of data on sda bus
                         sda_drive_en <= 1'b1;             //drive line
                         bit_index <= bit_index + 1;     //increment counter
+                        scl <= 0;
                         end
                         
                     else begin
@@ -226,16 +240,30 @@ always_ff @(posedge clk or negedge rst_n) begin
 
             STOP: begin
                 if(scl_tick) begin
-                ROM_index <= ROM_index + 1;
-                state <= WAIT_;
-            end
-            
-            end
-
-            WAIT_: begin
-                if(scl_tick) begin
-                state <= LOAD_NEXT;
+                     if(s_count1 == 0)                //buffer state for stability, makes sure line is actually idle
+                          begin
+                        sda_drive_en <= 1;
+                        sda_out <= 0;
+                        scl <= 0;
+                        s_count1 <= 1;
+                    end
+                        else if(s_count1 == 1)           //begin start process, set sda low first
+                    begin
+                        scl <= 1;
+                        s_count1 <= 2'b10;
+                    end
+                        else if(s_count1 == 2)       //continue start process by setting scl low as well, atp can go to next state
+                    begin
+                        sda_out <= 1;
+                        s_count1 <= 2'b0;
+                        ROM_index <= ROM_index + 1;
+                        state <= LOAD_NEXT;
+                    end
+                
+                
                 end
+                
+         
             end
 
             DONE: begin
