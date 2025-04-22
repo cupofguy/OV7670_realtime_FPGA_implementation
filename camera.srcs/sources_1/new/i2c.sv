@@ -23,7 +23,7 @@
 module i2c(
 
         input logic clk, // prob 100 MHz
-        input logic reset_n,
+        input logic rst_n,
         input logic start, //make this be like a button on fgpa that starts bootup seqeunce
         
         inout logic sda,        //serial data bi-directional
@@ -35,46 +35,18 @@ module i2c(
 
     );
     
+
+logic [7:0] ROM_index;
+logic [15:0] ROM_word;
+
+camera_config_ROM camera_config_inst(
+
+    .i_clk(clk),
+    .i_rstn(rst_n),
+    .i_addr(ROM_index),
+    .o_dout(ROM_word)
     
-localparam int NUM_REGS = 24;
-
-logic [7:0] config_array [0:NUM_REGS-1][1:0] = '{
-    // Reset
-    '{8'h12, 8'h80}, // COM7 - reset
-
-    // Clock settings
-    '{8'h11, 8'h01}, // CLKRC - prescaler / frame rate
-    '{8'h6B, 8'h4A}, // PLL control
-
-    // RGB565 output
-    '{8'h12, 8'h14}, // COM7 - RGB output, QVGA
-    '{8'h40, 8'hd0}, // COM15 - RGB565, full range
-    '{8'h8C, 8'h02}, // RGB444 - disable RGB444, enable RGB565
-    '{8'h3A, 8'h04}, // TSLB - set UV ordering, output format
-
-    // Windowing for QVGA
-    '{8'h17, 8'h16}, // HSTART
-    '{8'h18, 8'h04}, // HSTOP
-    '{8'h32, 8'ha4}, // HREF
-    '{8'h19, 8'h02}, // VSTART
-    '{8'h1A, 8'h7A}, // VSTOP
-    '{8'h03, 8'h0A}, // VREF
-
-    // Color matrix / gamma correction (basic)
-    '{8'h4F, 8'h80},
-    '{8'h50, 8'h80},
-    '{8'h51, 8'h00},
-    '{8'h52, 8'h22},
-    '{8'h53, 8'h5E},
-    '{8'h54, 8'h80},
-    '{8'h58, 8'h9E},
-
-    // Flip / mirror control
-    '{8'h0C, 8'h00}, // COM3 - no flip/mirror
-
-    // Auto white balance / gain control
-    '{8'h13, 8'hE7}  // COM8 - AGC, AWB, AEC enabled
-}; 
+    );
     
     // Internal state machine states
 enum logic [3:0] {
@@ -92,15 +64,12 @@ enum logic [3:0] {
     
  // Register list (example: small config array)
 //logic [7:0] config_array [0:N-1][1:0];  // [register][0=addr,1=data]
-integer index = 0;
-
 // Clock dividers for scl (e.g. 100kHz from 100MHz clk)
 logic scl_tick;
 
 // I2C bit-level control
 logic [7:0] byte_to_send;
 logic [2:0] bit_index;
-logic ack_received;
 
 // SDA open-drain logic
 logic sda_out;
@@ -110,11 +79,31 @@ logic sda_in = sda;
 logic [1:0] s_count;      //counter for start sequence 
 logic [2:0] reg_s_count;    //counter for sending reg address
 
+
+parameter integer CLK_DIV = 250;  // for 400 kHz SCL with 100 MHz clk
+
+logic [8:0] tick_counter = 0;           //this block of code splits our 100 MHz clk into a 400 khz clock compatible with i2c protocol
+logic scl_tick;
+
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        tick_counter <= 0;
+        scl_tick <= 0;
+    end else begin
+        if (tick_counter == CLK_DIV - 1) begin
+            tick_counter <= 0;
+            scl_tick <= 1; // pulse for 1 clock cycle
+        end else begin
+            tick_counter <= tick_counter + 1;
+            scl_tick <= 0;
+        end
+    end
+end
+
 // FSM pseudocode
-always_ff @(posedge clk or negedge reset_n) begin
-    if (!reset_n) begin
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
         state <= IDLE;
-        index <= 0;
         done <= 0;
         busy <= 0;
     end else begin
@@ -127,22 +116,20 @@ always_ff @(posedge clk or negedge reset_n) begin
             end
 
             LOAD_NEXT: begin
-                if (index == NUM_REGS) begin        //once done going through all write data, end
+                if (ROM_index == 75) begin        //once done going through all write data, end
                     state <= DONE;              
                 end else begin
                     byte_to_send <= 8'h42; // Device address (write)
                     s_count <= 2'b00;       // reset internal counters
-                    reg_s_count <= 3'b0;    //
+                    bit_index <= 0;    //
                     state <= START;
                 end
             end
 
             START: begin
                 // Pull SDA low while SCL is high
-                //do_start_condition();
-                
-                
-                
+                //do_start_condition()
+               
                 if(s_count == 0)                //buffer state for stability, makes sure line is actually idle
                     begin
                         sda_drive_en <= 1;
@@ -172,51 +159,89 @@ always_ff @(posedge clk or negedge reset_n) begin
                 //wait_for_ack();
 //                byte_to_send <= config_array[index][0]; // reg addr
 //                state <= SEND_REG_ADDR;
-                  byte_to_send <= config_array[index][0];       //set byte to send equal to the correct reg value
                   
-                  if(reg_s_count <= 3'b111)
-                    begin
+                  if(scl_tick) begin
+                        if (bit_index < 8) begin
                     
-                        sda_out <= byte_to_send[7];       //send msb of data on sda bus
+                        sda_out <= byte_to_send[7 - bit_index];       //send msb of data on sda bus
                         sda_drive_en <= 1'b1;             //drive line
-                        byte_to_send = byte_to_send << 1 ;  //left shift by one
-                        reg_s_count <= reg_s_count + 1;     //increment counter
+                        bit_index <= bit_index + 1;     //increment counter
+                        end
+                        
+                   
+                        else begin
+                        bit_index <= 0;
+                        sda_drive_en <= 0;
+                        byte_to_send = ROM_word[15:8];
+                        state <= SEND_REG_ADDR;
+                        
+                        end
                     end
-                 
-                 
-                 state <= SEND_REG_ADDR;
-                  
-                    
-                    
-            end
+              end
 
             SEND_REG_ADDR: begin
-                send_byte(byte_to_send);
-                wait_for_ack();
-                byte_to_send <= config_array[index][1]; // reg data
-                state <= SEND_DATA;
-            end
+                //send_byte(byte_to_send);
+                //wait_for_ack();
+//                byte_to_send <= config_array[index][0]; // reg addr
+//                state <= SEND_REG_ADDR;
+//                  byte_to_send <= config_array[index];      //set byte to send equal to the correct reg value
+                  
+                  if(scl_tick) begin
+                        if (bit_index < 8) begin
+                    
+                        sda_out <= byte_to_send[7 - bit_index];       //send msb of data on sda bus
+                        sda_drive_en <= 1'b1;             //drive line
+                        bit_index <= bit_index + 1;     //increment counter
+                        end
+                        
+                    else begin
+                        bit_index <= 0;
+                        sda_drive_en <= 0;
+                        byte_to_send = ROM_word[7:0];
+                        state <= SEND_DATA;
+                        
+                        end
+                   end
+              end
 
-            SEND_DATA: begin
-                send_byte(byte_to_send);
-                wait_for_ack();
-                state <= STOP;
-            end
+            SEND_DATA: begin  
+            
+            if(scl_tick) begin
+                        if (bit_index < 8) begin
+                    
+                        sda_out <= byte_to_send[7 - bit_index];       //send msb of data on sda bus
+                        sda_drive_en <= 1'b1;             //drive line
+                        bit_index <= bit_index + 1;     //increment counter
+                        end
+                        
+                    else begin
+                        bit_index <= 0;
+                        sda_drive_en <= 0;
+                        state <= STOP;
+                        end
+                        
+                   end
+                   
+                   end     
 
             STOP: begin
-                do_stop_condition();
-                index <= index + 1;
+                if(scl_tick) begin
+                ROM_index <= ROM_index + 1;
                 state <= WAIT_;
+            end
+            
             end
 
             WAIT_: begin
-                wait_some_cycles();
+                if(scl_tick) begin
                 state <= LOAD_NEXT;
+                end
             end
 
             DONE: begin
                 busy <= 0;
                 done <= 1;
+                state <= IDLE;
             end
         endcase
     end
