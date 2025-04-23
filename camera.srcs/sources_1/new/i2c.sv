@@ -29,7 +29,8 @@ module i2c(
         inout logic sda,        //serial data bi-directional
         
         output logic scl,           //serial clk
-        output logic done, busy
+        output logic done, 
+        output logic busy
 
 
 
@@ -48,7 +49,7 @@ camera_config_ROM camera_config_inst(
     
     );
     
-    // Internal state machine states
+// Internal state machine states
 enum logic [3:0] {
     IDLE,
     LOAD_NEXT,
@@ -59,30 +60,22 @@ enum logic [3:0] {
     STOP,
     DONE
 } state;
-    
-    
- // Register list (example: small config array)
-//logic [7:0] config_array [0:N-1][1:0];  // [register][0=addr,1=data]
-// Clock dividers for scl (e.g. 100kHz from 100MHz clk)
-
 
 // I2C bit-level control
 logic [7:0] byte_to_send;
 logic [2:0] bit_index;
+logic bit_phase; // 0 = setup SDA, 1 = raise SCL
 
 // SDA open-drain logic
 logic sda_out;
 logic sda_drive_en;
 assign sda = sda_drive_en ? sda_out : 1'bz;
-logic sda_in = sda;
-logic [1:0] s_count;      //counter for start sequence 
+logic [1:0] s_count;
 logic [1:0] s_count1;
-logic [2:0] reg_s_count;    //counter for sending reg address
-
 
 parameter integer CLK_DIV = 250;  // for 400 kHz SCL with 100 MHz clk
 
-logic [8:0] tick_counter = 0;           //this block of code splits our 100 MHz clk into a 400 khz clock compatible with i2c protocol
+logic [8:0] tick_counter = 0;
 logic scl_tick;
 
 always_ff @(posedge clk or negedge rst_n) begin
@@ -92,7 +85,7 @@ always_ff @(posedge clk or negedge rst_n) begin
     end else begin
         if (tick_counter == CLK_DIV - 1) begin
             tick_counter <= 0;
-            scl_tick <= 1; // pulse for 1 clock cycle
+            scl_tick <= 1;
         end else begin
             tick_counter <= tick_counter + 1;
             scl_tick <= 0;
@@ -100,7 +93,6 @@ always_ff @(posedge clk or negedge rst_n) begin
     end
 end
 
-// FSM pseudocode
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         state <= IDLE;
@@ -113,6 +105,7 @@ always_ff @(posedge clk or negedge rst_n) begin
         bit_index <= 0;
         s_count <= 0;
         s_count1 <= 0;
+        bit_phase <= 0;
     end else begin
         case (state)
             IDLE: begin
@@ -120,150 +113,124 @@ always_ff @(posedge clk or negedge rst_n) begin
                 busy <= 0;
                 sda_out <= 1;
                 scl <= 1;
-            
-                  if (start) begin            //if button to start process pressed, start process
+                if (start) begin
                     state <= LOAD_NEXT;
                     busy <= 1;
-                  end
+                end
             end
 
             LOAD_NEXT: begin
-                if (ROM_index >= 75) begin        //once done going through all write data, end
+                if (ROM_index >= 75) begin
                     state <= DONE;              
                 end else begin
-                    byte_to_send <= 8'h42; // Device address (write)
-                    s_count <= 2'b00;       // reset internal counters
-                    bit_index <= 0;    //
+                    byte_to_send <= 8'h42;
+                    s_count <= 0;
+                    bit_index <= 0;
+                    bit_phase <= 0;
                     state <= START;
                 end
             end
 
             START: begin
-                // Pull SDA low while SCL is high
-                //do_start_condition()
-               if(scl_tick) begin
-                if(s_count == 0)                //buffer state for stability, makes sure line is actually idle
-                    begin
+                if(scl_tick) begin
+                    if(s_count == 0) begin
                         sda_drive_en <= 1;
                         sda_out <= 1;
                         scl <= 1;
                         s_count <= 1;
-                    end
-                else if(s_count == 1)           //begin start process, set sda low first
-                    begin
-                        sda_out <= 1'b0;
-                        s_count <= 2'b10;
-                    end
-                else if(s_count == 2)       //continue start process by setting scl low as well, atp can go to next state
-                    begin
+                    end else if(s_count == 1) begin
+                        sda_out <= 0;
+                        s_count <= 2;
+                    end else if(s_count == 2) begin
                         scl <= 0;
-                        s_count <= 2'b0;
+                        s_count <= 0;
                         state <= SEND_DEVICE_ADDR;
                     end
-                
-                
                 end
             end
 
             SEND_DEVICE_ADDR: begin
-                //send_byte(byte_to_send);
-                //wait_for_ack();
-//                byte_to_send <= config_array[index][0]; // reg addr
-//                state <= SEND_REG_ADDR;
-                  
-                  if(scl_tick) begin
-                        if (bit_index < 8) begin
-                    
-                        sda_out <= byte_to_send[7 - bit_index];       //send msb of data on sda bus
-                        sda_drive_en <= 1'b1;             //drive line
-                        bit_index <= bit_index + 1;     //increment counter
+                if(scl_tick) begin
+                    if (!bit_phase) begin
+                        sda_out <= byte_to_send[7 - bit_index];
+                        sda_drive_en <= 1;
                         scl <= 0;
-                        end
-                        
-                   
-                        else begin
-                        bit_index <= 0;
-                        sda_drive_en <= 0;
-                        byte_to_send = ROM_word[15:8];
-                        state <= SEND_REG_ADDR;
-                        
+                        bit_phase <= 1;
+                    end else begin
+                        scl <= 1;
+                        bit_phase <= 0;
+                        if (bit_index == 7) begin
+                            bit_index <= 0;
+                            sda_drive_en <= 0;
+                            byte_to_send <= ROM_word[15:8];
+                            state <= SEND_REG_ADDR;
+                        end else begin
+                            bit_index <= bit_index + 1;
                         end
                     end
-              end
+                end
+            end
 
             SEND_REG_ADDR: begin
-                //send_byte(byte_to_send);
-                //wait_for_ack();
-//                byte_to_send <= config_array[index][0]; // reg addr
-//                state <= SEND_REG_ADDR;
-//                  byte_to_send <= config_array[index];      //set byte to send equal to the correct reg value
-                  
-                  if(scl_tick) begin
-                        if (bit_index < 8) begin
-                    
-                        sda_out <= byte_to_send[7 - bit_index];       //send msb of data on sda bus
-                        sda_drive_en <= 1'b1;             //drive line
-                        bit_index <= bit_index + 1;     //increment counter
+                if(scl_tick) begin
+                    if (!bit_phase) begin
+                        sda_out <= byte_to_send[7 - bit_index];
+                        sda_drive_en <= 1;
                         scl <= 0;
+                        bit_phase <= 1;
+                    end else begin
+                        scl <= 1;
+                        bit_phase <= 0;
+                        if (bit_index == 7) begin
+                            bit_index <= 0;
+                            sda_drive_en <= 0;
+                            byte_to_send <= ROM_word[7:0];
+                            state <= SEND_DATA;
+                        end else begin
+                            bit_index <= bit_index + 1;
                         end
-                        
-                    else begin
-                        bit_index <= 0;
-                        sda_drive_en <= 0;
-                        byte_to_send = ROM_word[7:0];
-                        state <= SEND_DATA;
-                        
-                        end
-                   end
-              end
+                    end
+                end
+            end
 
-            SEND_DATA: begin  
-            
-            if(scl_tick) begin
-                        if (bit_index < 8) begin
-                    
-                        sda_out <= byte_to_send[7 - bit_index];       //send msb of data on sda bus
-                        sda_drive_en <= 1'b1;             //drive line
-                        bit_index <= bit_index + 1;     //increment counter
+            SEND_DATA: begin
+                if(scl_tick) begin
+                    if (!bit_phase) begin
+                        sda_out <= byte_to_send[7 - bit_index];
+                        sda_drive_en <= 1;
                         scl <= 0;
+                        bit_phase <= 1;
+                    end else begin
+                        scl <= 1;
+                        bit_phase <= 0;
+                        if (bit_index == 7) begin
+                            bit_index <= 0;
+                            sda_drive_en <= 0;
+                            state <= STOP;
+                        end else begin
+                            bit_index <= bit_index + 1;
                         end
-                        
-                    else begin
-                        bit_index <= 0;
-                        sda_drive_en <= 0;
-                        state <= STOP;
-                        end
-                        
-                   end
-                   
-                   end     
+                    end
+                end
+            end
 
             STOP: begin
                 if(scl_tick) begin
-                     if(s_count1 == 0)                //buffer state for stability, makes sure line is actually idle
-                          begin
+                    if(s_count1 == 0) begin
                         sda_drive_en <= 1;
                         sda_out <= 0;
                         scl <= 0;
                         s_count1 <= 1;
-                    end
-                        else if(s_count1 == 1)           //begin start process, set sda low first
-                    begin
+                    end else if(s_count1 == 1) begin
                         scl <= 1;
-                        s_count1 <= 2'b10;
-                    end
-                        else if(s_count1 == 2)       //continue start process by setting scl low as well, atp can go to next state
-                    begin
+                        s_count1 <= 2;
+                    end else if(s_count1 == 2) begin
                         sda_out <= 1;
-                        s_count1 <= 2'b0;
+                        s_count1 <= 0;
                         ROM_index <= ROM_index + 1;
                         state <= LOAD_NEXT;
                     end
-                
-                
                 end
-                
-         
             end
 
             DONE: begin
@@ -274,8 +241,5 @@ always_ff @(posedge clk or negedge rst_n) begin
         endcase
     end
 end
-    
-    
-    
-    
+
 endmodule
