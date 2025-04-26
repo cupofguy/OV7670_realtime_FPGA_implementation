@@ -1,0 +1,24 @@
+# Ignore Vivado project files
+*.xpr
+*.log
+*.jou
+*.str
+*.wdb
+*.pb
+*.tmp
+*.backup
+
+# Ignore Vivado-generated folders
+.cache/
+.hw/
+.sim/
+.runs/
+.ip_user_files/
+.gen/
+.xgui/
+
+# Ignore other non-source files
+*.txt
+
+# Keep only SystemVerilog source files
+!**/*.sv
