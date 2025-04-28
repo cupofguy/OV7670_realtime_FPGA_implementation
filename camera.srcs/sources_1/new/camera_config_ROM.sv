@@ -38,8 +38,8 @@ module camera_config_ROM(
             1:  o_dout <= 16'hFF_F0;  // Delay
             2:  o_dout <= 16'h12_04;  // COM7,        Set RGB color output
             3:  o_dout <= 16'h11_00;  // CLKRC        Internal PLL matches input clock (24 MHz). 
-            4:  o_dout <= 16'h0C_00;  // COM3,        *Leave as default.
-            5:  o_dout <= 16'h3E_00;  // COM14,       *Leave as default. No scaling, normal pclock
+            4: o_dout <= 16'h0C_04;  // COM3 - Enable scaling
+            5: o_dout <= 16'h3E_1A;  // COM14 - Enable manual scaling
             6:  o_dout <= 16'h04_00;  // COM1,        *Leave as default. Disable CCIR656
             7:  o_dout <= 16'h8C_02;  // RGB444       Enable RGB444 mode with xR GB.
             8:  o_dout <= 16'h40_D0;  // COM15,       Output full range for RGB 444. 
@@ -72,8 +72,8 @@ module camera_config_ROM(
             //begin mystery scaling numbers
             35: o_dout <= 16'h70_3a;  // SCALING_XSC          *Leave as default. No test pattern output. 
             36: o_dout <= 16'h71_35;  // SCALING_YSC          *Leave as default. No test pattern output.
-            37: o_dout <= 16'h72_11;  // SCALING DCWCTR       *Leave as default. Vertical down sample by 2. Horizontal down sample by 2.
-            38: o_dout <= 16'h73_f0;  // SCALING PCLK_DIV 
+            37: o_dout <= 16'h72_22;  // Scaling down by 4
+            38: o_dout <= 16'h73_F2;  // Adjust pixel clock
             39: o_dout <= 16'ha2_02;  // SCALING PCLK DELAY   *Leave as deafult. 
             //gamma curve values
             40: o_dout <= 16'h7a_20;  // SLOP
