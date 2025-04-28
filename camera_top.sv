@@ -41,6 +41,12 @@ module camera_top(
       
       output logic scl,
       
+      output logic led_output,
+      
+      output logic xclk,
+      
+      output logic reset_out,
+      
     output logic hdmi_tmds_clk_n,
     output logic hdmi_tmds_clk_p,
     output logic [2:0]hdmi_tmds_data_n,
@@ -51,15 +57,18 @@ module camera_top(
 
 logic locked;
 logic clk_24MHz;
+logic clk_25MHz;
 logic clk_125MHz;
 
 logic RESET_N;
+
+assign reset_out = RESET_N;
 
 logic START;
 logic done;
 logic busy;
 
-
+assign xclk = clk_24MHz;
 
 i2c i2c_inst (
 
@@ -73,11 +82,12 @@ i2c i2c_inst (
 
 );
 
-
+assign led_output = done;
 
 clk_wiz_0 clk_wiz (
         .clk_out1(clk_24MHz),
-        .clk_out2(clk_125MHz),
+        .clk_out2(clk_25MHz),
+        .clk_out3(clk_125MHz),
         .reset(RESET_N),
         .locked(locked),
         .clk_in1(Clk)
@@ -129,8 +139,8 @@ blk_mem_gen_0 bram (
     .wea(wr_enable), //wr_en
     
    
-    .addrb(read_address), //UNACCOUNTED RN
-    .clkb(clk_24MHz), //pclk
+    .addrb(read_address), 
+    .clkb(clk_25MHz), //pixel_clk for HDMI stuff
     .dinb(12'b0), //
     .doutb(pixel_read_out), 
     .enb(1'b1),  
@@ -141,7 +151,7 @@ blk_mem_gen_0 bram (
     
     
     vga_controller vga (
-        .pixel_clk(clk_24MHz),
+        .pixel_clk(clk_25MHz),
         .reset(~RESET_N),
         .hs(hsync),
         .vs(vsync_controller),
@@ -153,7 +163,7 @@ blk_mem_gen_0 bram (
     
     hdmi_tx_0 vga_to_hdmi (
         //Clocking and Reset
-        .pix_clk(clk_24MHz),
+        .pix_clk(clk_25MHz),
         .pix_clkx5(clk_125MHz),
         .pix_clk_locked(locked),
         //Reset is active LOW
@@ -173,8 +183,8 @@ blk_mem_gen_0 bram (
         .ade(1'b0),
         
         //Differential outputs
-        .TMDS_CLK_P(hdmi_tmds_clk_n),          
-        .TMDS_CLK_N(hdmi_tmds_clk_p),          
+        .TMDS_CLK_P(hdmi_tmds_clk_p),          
+        .TMDS_CLK_N(hdmi_tmds_clk_n),          
         .TMDS_DATA_P(hdmi_tmds_data_p),         
         .TMDS_DATA_N(hdmi_tmds_data_n)          
     );
