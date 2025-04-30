@@ -36,7 +36,6 @@ module i2c(
 
     );
     
-
 logic [7:0] ROM_index;
 logic [15:0] ROM_word;
 
@@ -77,6 +76,10 @@ parameter integer CLK_DIV = 250;  // for 400 kHz SCL with 100 MHz clk
 
 logic [8:0] tick_counter = 0;
 logic scl_tick;
+logic start_latched;
+
+
+assign done_write = done;
 
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -95,6 +98,15 @@ end
 
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
+        start_latched <= 1'b0;
+    end
+    else if (start) begin
+        start_latched <= 1'b1;
+     end
+end
+
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
         state <= IDLE;
         done <= 0;
         busy <= 0;
@@ -109,18 +121,23 @@ always_ff @(posedge clk or negedge rst_n) begin
     end else begin
         case (state)
             IDLE: begin
+               if (ROM_index >= 79) begin
+                 done <= 1;
+               end
+               else begin
                 done <= 0;
+               end
                 busy <= 0;
                 sda_out <= 1;
                 scl <= 1;
-                if (start) begin
+                if (start_latched) begin
                     state <= LOAD_NEXT;
                     busy <= 1;
                 end
             end
 
             LOAD_NEXT: begin
-                if (ROM_index >= 75) begin
+                if (ROM_index >= 79) begin
                     state <= DONE;              
                 end else begin
                     byte_to_send <= 8'h42;
