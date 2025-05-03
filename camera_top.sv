@@ -79,7 +79,6 @@ logic busy;
 assign xclk = clk_24MHz;
 
 
-
 i2c i2c_inst (
 
     .clk(Clk),
@@ -107,8 +106,8 @@ clk_wiz_0 clk_wiz (
 logic vsync_controller;
 
 logic [11:0] RGB_data;
-logic [14:0] wr_address;
-logic [14:0] read_address;
+logic [16:0] wr_address;
+logic [16:0] read_address;
 logic wr_enable;
 logic [11:0] pixel_write_out;
 logic [11:0] pixel_read_out;  
@@ -116,7 +115,7 @@ logic [11:0] pixel_read_out;
 logic [9:0] drawX, drawY;
 logic hsync, vde;
     
-assign vde1 = (vde && scaled_x<8'd160 && scaled_y<8'd120);
+//assign vde1 = (vde && scaled_x<9'd320 && scaled_y<8'd240);
 
 pixel_capture p1 (
     .D(D),
@@ -129,52 +128,94 @@ pixel_capture p1 (
     .wr_en(wr_enable)
 );
 
-logic [14:0] read_addr;
-logic [7:0] scaled_x;
-logic [7:0] scaled_y;
-
-assign scaled_x = drawX[9:2]; // divide drawX by 4
-assign scaled_y = drawY[9:2]; // divide drawY by 4
+logic [16:0] read_addr;
+//logic [8:0] scaled_x;
+//logic [8:0] scaled_y;
 
 
+//assign scaled_x = drawX[9:1]; // divide drawX by 4
+//assign scaled_y = drawY[9:1]; // divide drawY by 4
 
-//logic vsync_r;
-//logic vsync_r_old;
+// Stage 1: down-sample & register X/Y by 2 ? 0..319 / 0..239
+logic [8:0]  scaled_x_r;
+logic [7:0]  scaled_y_r;
+always_ff @(posedge clk_25MHz) begin
+    scaled_x_r <= drawX >> 1;   // 640?320 columns
+    scaled_y_r <= drawY >> 1;   // 480?240 rows
+end
 
-//always_ff @(posedge clk_25MHz or posedge RESET_N) begin
-//  if (RESET_N) begin
-//    vsync_r     <= 1'b0;
-//    vsync_r_old <= 1'b0;
-//  end else begin
-//    vsync_r     <= vsync_controller;
-//    vsync_r_old <= vsync_r;
-//  end
+// Stage 2: compute read address = y320 + x, pipelined
+logic [16:0] mulA, mulB, sumAB;
+logic [16:0] read_addr_r;
+always_ff @(posedge clk_25MHz) begin
+    // 320 = 256 + 64
+    mulA        <= {scaled_y_r,8'd0};  // y<<8 = y256
+    mulB        <= {scaled_y_r,6'd0};  // y<<6 = y* 64
+    sumAB       <= mulA + mulB;        // = y*320
+    read_addr_r <= sumAB + scaled_x_r; // final address
+end
+
+
+// Stage 3: register the BRAM output, then clamp to 320×240 region
+
+logic frame_active;
+
+logic [11:0] pixel_buf, pixel_out;
+always_ff @(posedge clk_25MHz) begin
+    pixel_buf <= pixel_read_out;
+    if (!(frame_active && vde && drawX < 320 && drawY < 240))
+        pixel_out <= 12'h000;
+    else
+        pixel_out <= pixel_buf;
+end
+
+
+
+
+//logic [16:0] mulA, mulB, sumAB;
+
+//// stage 1: partial products
+//always_ff @(posedge clk_25MHz) begin
+//  mulA <= {scaled_y,8'd0};  // <<8 ? y256
+//  mulB <= {scaled_y,6'd0};  // <<6 ? y64
 //end
-//wire frame_start = ~vsync_r & vsync_r_old;
 
+//// stage 2: combine them
+//always_ff @(posedge clk_25MHz) begin
+//  sumAB <= mulA + mulB;     // = y(256+64)=y320
+//end
 
-//// reset on global RESET_N or on the very first active pixel (drawX=0, drawY=0)
-//always_ff @(posedge clk_25MHz or posedge RESET_N) begin
-//  if (RESET_N) begin
-//    read_addr <= 0;
-//  end
-//  else if (vde && drawX == 10'd0 && drawY == 10'd0) begin
-//    read_addr <= 0;
-//  end
-//  else if (vde && (scaled_x < 8'd160) && (scaled_y < 8'd120)) begin
-//    read_addr <= read_addr + 1;
-//  end
-//  // else hold
+//// stage 3: final address
+//always_ff @(posedge clk_25MHz) begin
+//  read_address <= sumAB + scaled_x;
 //end
 
 
-// ----------------------------------------------------------------------------
-//// 3) Hook it up to BRAM
-//assign read_address = read_addr;
 
-assign read_address = scaled_y * 160 + scaled_x;
+//assign read_address = scaled_y * 320 + scaled_x;
 
-blk_mem_gen_0 bram (
+
+//blk_mem_gen_0 bram (
+////writing pixel data from camera and reading to HDMI
+//    .addra(wr_address), //write address (rom index)
+//    .clka(pclk),  //pclk (camera pixel clock)
+//    .dina(RGB_data),  //
+//    .douta(pixel_write_out), //
+//    .ena(1'b1),  
+//    .wea(wr_enable), //wr_en
+    
+   
+//    .addrb(read_address), 
+//    .clkb(clk_25MHz), //pixel_clk for HDMI stuff
+//    .dinb(12'b0), //
+//    .doutb(pixel_read_out), 
+//    .enb(1'b1),  
+//    .web(1'b0) 
+    
+    
+//    );
+    
+    blk_mem_gen_1 bram (
 //writing pixel data from camera and reading to HDMI
     .addra(wr_address), //write address (rom index)
     .clka(pclk),  //pclk (camera pixel clock)
@@ -184,7 +225,7 @@ blk_mem_gen_0 bram (
     .wea(wr_enable), //wr_en
     
    
-    .addrb(read_address), 
+    .addrb(read_addr_r), 
     .clkb(clk_25MHz), //pixel_clk for HDMI stuff
     .dinb(12'b0), //
     .doutb(pixel_read_out), 
@@ -214,9 +255,9 @@ blk_mem_gen_0 bram (
         //Reset is active LOW
         .rst(RESET_N), //active low
         //Color and Sync Signals
-        .red(pixel_read_out[11:8]),
-        .green(pixel_read_out[7:4]),
-        .blue(pixel_read_out[3:0]),
+        .red(pixel_out[11:8]),
+        .green(pixel_out[7:4]),
+        .blue(pixel_out[3:0]),
         .hsync(hsync),
         .vsync(vsync_controller),
         .vde(vde),

@@ -16,14 +16,16 @@ module pixel_capture(
     input logic href,
 
     output logic [11:0] RGB,
-    output logic [14:0] wr_addr,
+    output logic [16:0] wr_addr,
     output logic wr_en
 );
 
 logic [7:0] byte1, byte2;
 logic [3:0] red, green, blue;
-logic [7:0] col_index;  // 0-159
+logic [8:0] col_index;  // 0-159
 logic [7:0] row_index;  // 0-119
+
+logic [16:0] write_addr;
 
 // FSM states
 enum logic [2:0] {
@@ -38,6 +40,7 @@ enum logic [2:0] {
 always_ff @(posedge pclk) begin
     if (vsync) begin
         pixel_state <= IDLE;
+        write_addr <= 0;
         col_index <= 0;
         row_index <= 0;
         wr_en <= 0;
@@ -76,19 +79,20 @@ always_ff @(posedge pclk) begin
                 green <= byte2[7:4];
                 blue <= byte2[3:0];
                 RGB <= {byte1[3:0], byte2[7:4], byte2[3:0]};
-                wr_addr <= row_index * 160 + col_index; // 2D to 1D flattening
+                wr_addr <= write_addr; // 2D to 1D flattening
+                write_addr <= write_addr + 1;
                 wr_en <= 1'b1;
                 pixel_state <= COL_ADD;
             end
 
             COL_ADD: begin
                 wr_en <= 0;
-                if (col_index < 159) begin
+                if (col_index < 319) begin
                     col_index <= col_index + 1;
                     pixel_state <= BYTE_1;
                 end else begin
                     col_index <= 0;
-                    if (row_index < 119) begin
+                    if (row_index < 239) begin
                         row_index <= row_index + 1;
                         pixel_state <= BYTE_1;
                     end else begin
