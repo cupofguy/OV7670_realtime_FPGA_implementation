@@ -156,18 +156,6 @@ always_ff @(posedge clk_25MHz) begin
 end
 
 
-// Stage 3: register the BRAM output, then clamp to 320×240 region
-
-logic frame_active;
-
-logic [11:0] pixel_buf, pixel_out;
-always_ff @(posedge clk_25MHz) begin
-    pixel_buf <= pixel_read_out;
-    if (!(frame_active && vde && drawX < 320 && drawY < 240))
-        pixel_out <= 12'h000;
-    else
-        pixel_out <= pixel_buf;
-end
 
 
 
@@ -255,9 +243,9 @@ end
         //Reset is active LOW
         .rst(RESET_N), //active low
         //Color and Sync Signals
-        .red(pixel_out[11:8]),
-        .green(pixel_out[7:4]),
-        .blue(pixel_out[3:0]),
+        .red(pixel_read_out[11:8]),
+        .green(pixel_read_out[7:4]),
+        .blue(pixel_read_out[3:0]),
         .hsync(hsync),
         .vsync(vsync_controller),
         .vde(vde),
