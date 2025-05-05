@@ -39,6 +39,10 @@ module camera_top(
       
       inout logic sda,
       
+      input logic btn_invert,
+      
+      input logic btn_grey,
+      
       output logic scl,
       
       output logic led_output,
@@ -75,6 +79,10 @@ assign reset_out = ~RESET_N;
 logic START;
 logic done;
 logic busy;
+
+
+logic BTN_GREY;
+logic BTN_INVERT;
 
 assign xclk = clk_24MHz;
 
@@ -114,8 +122,7 @@ logic [11:0] pixel_read_out;
 
 logic [9:0] drawX, drawY;
 logic hsync, vde;
-    
-//assign vde1 = (vde && scaled_x<9'd320 && scaled_y<8'd240);
+   
 
 pixel_capture p1 (
     .D(D),
@@ -129,12 +136,6 @@ pixel_capture p1 (
 );
 
 logic [16:0] read_addr;
-//logic [8:0] scaled_x;
-//logic [8:0] scaled_y;
-
-
-//assign scaled_x = drawX[9:1]; // divide drawX by 4
-//assign scaled_y = drawY[9:1]; // divide drawY by 4
 
 // Stage 1: down-sample & register X/Y by 2 ? 0..319 / 0..239
 logic [8:0]  scaled_x_r;
@@ -157,52 +158,6 @@ end
 
 
 
-
-
-
-//logic [16:0] mulA, mulB, sumAB;
-
-//// stage 1: partial products
-//always_ff @(posedge clk_25MHz) begin
-//  mulA <= {scaled_y,8'd0};  // <<8 ? y256
-//  mulB <= {scaled_y,6'd0};  // <<6 ? y64
-//end
-
-//// stage 2: combine them
-//always_ff @(posedge clk_25MHz) begin
-//  sumAB <= mulA + mulB;     // = y(256+64)=y320
-//end
-
-//// stage 3: final address
-//always_ff @(posedge clk_25MHz) begin
-//  read_address <= sumAB + scaled_x;
-//end
-
-
-
-//assign read_address = scaled_y * 320 + scaled_x;
-
-
-//blk_mem_gen_0 bram (
-////writing pixel data from camera and reading to HDMI
-//    .addra(wr_address), //write address (rom index)
-//    .clka(pclk),  //pclk (camera pixel clock)
-//    .dina(RGB_data),  //
-//    .douta(pixel_write_out), //
-//    .ena(1'b1),  
-//    .wea(wr_enable), //wr_en
-    
-   
-//    .addrb(read_address), 
-//    .clkb(clk_25MHz), //pixel_clk for HDMI stuff
-//    .dinb(12'b0), //
-//    .doutb(pixel_read_out), 
-//    .enb(1'b1),  
-//    .web(1'b0) 
-    
-    
-//    );
-    
     blk_mem_gen_1 bram (
 //writing pixel data from camera and reading to HDMI
     .addra(wr_address), //write address (rom index)
@@ -235,6 +190,36 @@ end
     );   
     
     
+    wire[11:0] pix_in = pixel_read_out; //intermediate pixel val
+    
+    //greyscale  logic
+    
+    wire[5:0] sum  = pix_in[11:8] + pix_in[7:4] + pix_in [3:0]; //next two lines avg the pixel
+    wire[3:0] intensity = sum[5:2]; //make it 4 bits
+    
+    wire[11:0] pix_gray = {intensity, intensity, intensity};
+    
+    //invert logic
+    
+    wire [11:0] pix_inv = 12'hFFF - pix_in;
+    
+    //mux to choose which one we doing.
+    
+    logic [11:0] pix_out_effects;
+    
+    always_comb begin
+    
+    if(BTN_INVERT)  pix_out_effects = pix_inv;
+    
+    else if(BTN_GREY) pix_out_effects = pix_gray;
+    
+    else pix_out_effects = pix_in;
+    
+    end
+    
+    
+    
+    
     hdmi_tx_0 vga_to_hdmi (
         //Clocking and Reset
         .pix_clk(clk_25MHz),
@@ -243,9 +228,9 @@ end
         //Reset is active LOW
         .rst(RESET_N), //active low
         //Color and Sync Signals
-        .red(pixel_read_out[11:8]),
-        .green(pixel_read_out[7:4]),
-        .blue(pixel_read_out[3:0]),
+        .red(pix_out_effects[11:8]),
+        .green(pix_out_effects[7:4]),
+        .blue(pix_out_effects[3:0]),
         .hsync(hsync),
         .vsync(vsync_controller),
         .vde(vde),
@@ -279,5 +264,18 @@ sync_debounce start1 (
 		.d    (start),
 		.q    (START) //intermiediate signals
 	);
+
+sync_debounce db_inv (
+		.clk  (Clk),
+
+		.d    (btn_invert),
+		.q    (BTN_INVERT) //intermiediate signals
+	);	
 	
+sync_debounce db_grey (
+		.clk  (Clk),
+
+		.d    (btn_grey),
+		.q    (BTN_GREY) //intermiediate signals
+	);		
 endmodule
